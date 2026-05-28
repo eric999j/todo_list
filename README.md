@@ -1,6 +1,6 @@
-# 代辦 v9 — 專案概覽與現行技術架構
+# 待辦 v9 — 專案概覽與現行技術架構
 
-此專案為一個以模組化、MVVM 風格實作的代辦應用程式，主要分成：
+此專案為一個以模組化、MVVM 風格實作的待辦應用程式，主要分成：
 
 - `task.py`: 任務資料模型（序列化/反序列化）。
 - `task_manager.py`: 任務儲存、載入、匯出與檔案相關處理（支援可注入的 UI callback）。
@@ -71,13 +71,13 @@ python todo_app.py
 - [task_filter.py](task_filter.py)
 - [commands/base_command.py](commands/base_command.py)
 - [commands/task_commands.py](commands/task_commands.py)
-# 代辦 v8 修復子清單 — 專案概覽
+# 待辦 v8 修復子清單 — 專案概覽
 
 本檔案以 Markdown 概覽此專案結構、主要模組責任與使用方式，並以 Mermaid 圖說明元件架構與主要流程。
 
 **簡短描述**
 
-一個以模組化方式實作的命令式代辦清單應用，主要負責：任務資料模型、任務管理邏輯、UI 管理、命令解析與操作歷史記錄。
+一個以模組化方式實作的命令式待辦清單應用，主要負責：任務資料模型、任務管理邏輯、UI 管理、命令解析與操作歷史記錄。
 
 **專案檔案（概要）**
 

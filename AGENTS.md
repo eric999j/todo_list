@@ -2,7 +2,7 @@
 
 ## Architecture
 
-MVVM + Command 模式的 Tkinter 代辦清單應用。
+MVVM + Command 模式的 Tkinter 待辦清單應用。
 
 | Layer | File | Responsibility |
 |-------|------|----------------|

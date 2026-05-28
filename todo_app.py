@@ -13,7 +13,7 @@ class TodoApp:
     """應用程式主控制器（僅負責 UI 與根視窗管理，業務邏輯委由 ViewModel）"""
     def __init__(self, root: tk.Tk) -> None:
         self.root: tk.Tk = root
-        self.root.title("代辦事項編排器")
+        self.root.title("待辦事項編排器")
         self.root.geometry("900x750")
 
         self.viewmodel: ViewModel = ViewModel() # 建立 VM（業務邏輯層）
