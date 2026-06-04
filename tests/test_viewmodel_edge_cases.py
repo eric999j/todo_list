@@ -17,6 +17,24 @@ def test_delete_tasks_with_unknown_id_is_noop():
     assert len(vm.tasks) == 1
 
 
+def test_delete_tasks_does_not_rebuild_index_for_known_targets():
+    vm = ViewModel()
+    parent = vm.add_task("Parent")
+    assert parent is not None
+    child = Task("Child")
+    parent.children.append(child)
+    vm.rebuild_task_index()
+
+    def fail_rebuild() -> None:
+        raise AssertionError("delete_tasks 不應重建整個索引")
+
+    vm.rebuild_task_index = fail_rebuild
+    vm.delete_tasks([child.id])
+
+    assert all(item.id != child.id for item in parent.children)
+    assert vm.get_task_by_id(child.id) is None
+
+
 def test_toggle_done_with_empty_list_is_noop():
     vm = ViewModel()
     vm.add_task("a")
@@ -64,6 +82,28 @@ def test_move_task_into_own_descendant_is_rejected():
     vm.move_task(parent.id, target_id=child.id, y=None, bbox=None, delta_x=None)
     assert vm.tasks[0] is parent
     assert child in parent.children
+
+
+def test_move_task_updates_parent_index_without_rebuild():
+    vm = ViewModel()
+    parent = vm.add_task("Parent")
+    sibling = vm.add_task("Sibling")
+    assert parent is not None
+    assert sibling is not None
+
+    child = Task("Child")
+    parent.children.append(child)
+    vm.rebuild_task_index()
+
+    def fail_rebuild() -> None:
+        raise AssertionError("move_task 不應重建整個索引")
+
+    vm.rebuild_task_index = fail_rebuild
+    vm.move_task(child.id, target_id=sibling.id, y=20, bbox=(0, 0, 100, 40), delta_x=0)
+
+    moved_parent, _ = vm.find_parent_list(child.id)
+    assert moved_parent is sibling
+    assert vm.get_task_by_id(child.id) is child
 
 
 def test_update_task_unknown_id_is_noop():

@@ -236,24 +236,27 @@ class ViewModel:
         """回傳 tasks 的深拷貝，用於命令的 state_backup。"""
         return copy.deepcopy(self.tasks)
 
-    def _mark_children_done(self, task: Task) -> int:
-        count = 0
+    def _set_descendants_done_state(
+        self,
+        task: Task,
+        is_done: bool,
+        affected_ids: Optional[Set[str]] = None,
+    ) -> int:
+        """單次走訪更新所有子孫狀態，並可同步收集受影響 ID。"""
+        changed_count = 0
         for child in task.children:
-            if not child.is_done:
-                child.is_done = True
-                count += 1
-            count += self._mark_children_done(child)
-        return count
+            if affected_ids is not None:
+                affected_ids.add(child.id)
+            if child.is_done != is_done:
+                child.is_done = is_done
+                changed_count += 1
+            changed_count += self._set_descendants_done_state(child, is_done, affected_ids)
+        return changed_count
 
-    def _mark_children_undone(self, task: Task) -> int:
-        """遞迴將所有子孫標示為未完成，回傳實際改變的數量。"""
-        count = 0
+    def _collect_subtree_ids(self, task: Task, into: Set[str]) -> None:
+        into.add(task.id)
         for child in task.children:
-            if child.is_done:
-                child.is_done = False
-                count += 1
-            count += self._mark_children_undone(child)
-        return count
+            self._collect_subtree_ids(child, into)
 
     def _mark_parents_undone(self, child_id: str) -> int:
         """當 child 變為未完成，往上將所有祖先標示為未完成。回傳改變的父項數量。"""
@@ -276,8 +279,15 @@ class ViewModel:
             if parent.is_done:
                 parent.is_done = False
                 count += 1
+            
             parent_id = self._parent_index.get(parent.id)
         return count
+
+    def _collect_ancestor_ids(self, task_id: str, into: Set[str]) -> None:
+        parent_id = self._parent_index.get(task_id)
+        while parent_id:
+            into.add(parent_id)
+            parent_id = self._parent_index.get(parent_id)
 
     # --- ViewModel API methods used by Commands ---
     def add_task(self, task_text: str, parent_id: Optional[str] = None, **kwargs) -> Optional[Task]:
@@ -321,19 +331,24 @@ class ViewModel:
         if not filtered_ids:
             return
 
-        task_id_set = set(filtered_ids)
+        removals: List[Tuple[Task, List[Task]]] = []
+        for task_id in filtered_ids:
+            task, parent_list = self.find_task_by_id(task_id)
+            if task is not None and parent_list is not None:
+                removals.append((task, parent_list))
 
-        for task_id in task_id_set:
-            task = self._task_index.get(task_id)
-            if task:
-                self._remove_from_index(task)
+        if not removals:
+            return
 
-        def filter_tasks(tasks: List[Task]) -> None:
-            tasks[:] = [task for task in tasks if task.id not in task_id_set]
-            for task in tasks:
-                filter_tasks(task.children)
+        for task, _ in removals:
+            self._remove_from_index(task)
 
-        filter_tasks(self.tasks)
+        for task, parent_list in removals:
+            try:
+                parent_list.remove(task)
+            except ValueError:
+                _logger.exception("parent_list 缺少待刪除任務 %s", task.id)
+
         if notify_ui:
             self._notify(f"已刪除 {original_count} 個任務")
 
@@ -368,10 +383,10 @@ class ViewModel:
             # 如果由已完成 -> 未完成，則將父項都設為未完成，且強制把所有子孫標為未完成
             if prev and not task.is_done:
                 self._mark_parents_undone(task.id)
-                self._mark_children_undone(task)
+                self._set_descendants_done_state(task, False)
             # 如果由未完成 -> 已完成，保留原本邏輯：標示子項為已完成
             if not prev and task.is_done:
-                self._mark_children_done(task)
+                self._set_descendants_done_state(task, True)
 
         if notify_ui:
             txt = kwargs.get("new_text", task.text)
@@ -392,25 +407,16 @@ class ViewModel:
                 task.is_done = not prev
                 last_task_status = task.is_done
                 affected_count += 1
-                affected_ids.add(task.id)
                 if task.is_done:
-                    affected_count += self._mark_children_done(task)
+                    affected_count += self._set_descendants_done_state(task, True, affected_ids)
                 else:
                     affected_count += self._mark_parents_undone(task.id)
-                    affected_count += self._mark_children_undone(task)
+                    affected_count += self._set_descendants_done_state(task, False, affected_ids)
                 self._collect_subtree_ids(task, affected_ids)
-                pid = self._parent_index.get(task.id)
-                while pid:
-                    affected_ids.add(pid)
-                    pid = self._parent_index.get(pid)
+                self._collect_ancestor_ids(task.id, affected_ids)
 
         status = "標示為已完成" if last_task_status else "標示為未完成"
         self._notify_refresh(list(affected_ids), f"{affected_count} 個任務已{status}")
-
-    def _collect_subtree_ids(self, task: Task, into: Set[str]) -> None:
-        for child in task.children:
-            into.add(child.id)
-            self._collect_subtree_ids(child, into)
 
     def remove_link(self, task_id: str) -> None:
         task, _ = self.find_task_by_id(task_id)
@@ -431,19 +437,20 @@ class ViewModel:
             return False
         return True
 
-    def _promote_task(self, task_to_move: Task, task_id: str) -> str:
-        """將任務移到目前父項之後（提升一個層級）。回傳狀態訊息。"""
+    def _promote_task(self, task_to_move: Task, task_id: str) -> Tuple[str, Optional[str]]:
+        """將任務移到目前父項之後（提升一個層級）。回傳狀態訊息與新父 ID。"""
         parent_task, parent_list = self.find_parent_list(task_id)
         if parent_task and parent_list is not None:
             try:
                 parent_index = parent_list.index(parent_task)
                 parent_list.insert(parent_index + 1, task_to_move)
-                return f"任務 '{task_to_move.text}' 已提升層級"
+                grandparent_id = self._parent_index.get(parent_task.id)
+                return f"任務 '{task_to_move.text}' 已提升層級", grandparent_id
             except ValueError:
                 self.tasks.append(task_to_move)
-                return "已移動任務至頂層"
+                return "已移動任務至頂層", None
         self.tasks.append(task_to_move)
-        return "已移動任務至頂層"
+        return "已移動任務至頂層", None
 
     @staticmethod
     def _is_drop_into_target(y: Optional[int], bbox: Optional[tuple]) -> bool:
@@ -461,8 +468,8 @@ class ViewModel:
         target_parent_list: List[Task],
         y: Optional[int],
         bbox: Optional[tuple],
-    ) -> str:
-        """在 target 同層的前/後插入任務。"""
+    ) -> Tuple[str, Optional[str]]:
+        """在 target 同層的前/後插入任務。回傳狀態訊息與新父 ID。"""
         try:
             target_index = target_parent_list.index(target_task)
         except ValueError:
@@ -470,7 +477,7 @@ class ViewModel:
 
         if target_index is None:
             self.tasks.append(task_to_move)
-            return "已移動任務至頂層"
+            return "已移動任務至頂層", None
 
         if bbox and isinstance(y, (int, float)):
             midpoint = bbox[1] + bbox[3] / 2
@@ -478,7 +485,7 @@ class ViewModel:
         else:
             offset = 1
         target_parent_list.insert(target_index + offset, task_to_move)
-        return "已移動任務"
+        return "已移動任務", self._parent_index.get(target_task.id)
 
     def _place_task_at_target(
         self,
@@ -486,15 +493,15 @@ class ViewModel:
         target_id: str,
         y: Optional[int],
         bbox: Optional[tuple],
-    ) -> str:
+    ) -> Tuple[str, Optional[str]]:
         target_task, target_parent_list = self.find_task_by_id(target_id)
         if target_task is None or target_parent_list is None:
             self.tasks.append(task_to_move)
-            return "已移動任務至頂層"
+            return "已移動任務至頂層", None
 
         if self._is_drop_into_target(y, bbox):
             target_task.children.append(task_to_move)
-            return f"任務 '{task_to_move.text}' 已成為 '{target_task.text}' 的子項"
+            return f"任務 '{task_to_move.text}' 已成為 '{target_task.text}' 的子項", target_task.id
 
         return self._insert_relative_to_target(task_to_move, target_task, target_parent_list, y, bbox)
 
@@ -519,12 +526,13 @@ class ViewModel:
             _logger.exception("source_list 缺少待移動任務 %s", task_id)
 
         if isinstance(delta_x, (int, float)) and delta_x < -20:
-            status = self._promote_task(task_to_move, task_id)
+            status, new_parent_id = self._promote_task(task_to_move, task_id)
         elif target_id:
-            status = self._place_task_at_target(task_to_move, target_id, y, bbox)
+            status, new_parent_id = self._place_task_at_target(task_to_move, target_id, y, bbox)
         else:
             self.tasks.append(task_to_move)
             status = "已移動任務至頂層"
+            new_parent_id = None
 
-        self.rebuild_task_index()
+        self._parent_index[task_to_move.id] = new_parent_id
         self._notify(status)

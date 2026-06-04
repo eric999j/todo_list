@@ -172,12 +172,16 @@ class ToggleDoneStatusCommand(Command):
         if not task_ids:
             return False
         
-        self._task_ids = list(task_ids)
+        filtered_ids = self.app._filter_descendant_ids(task_ids)
+        if not filtered_ids:
+            return False
+
+        self._task_ids = list(filtered_ids)
         self._original_states.clear()
         
         # 備份所有會被影響的狀態（含子孫與祖先鏈）
         found_any = False
-        for tid in task_ids:
+        for tid in filtered_ids:
             task, _ = self.app.find_task_by_id(tid)
             if task:
                 found_any = True
@@ -193,7 +197,7 @@ class ToggleDoneStatusCommand(Command):
         if not found_any:
             return False
 
-        self.app.toggle_done(task_ids)
+        self.app.toggle_done(filtered_ids)
         return True
     
     def undo(self) -> None:

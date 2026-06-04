@@ -90,7 +90,7 @@
                 "link": null,
                 "project": null,
                 "creation_time": "2026-04-20T09:00:40.357690Z",
-                "is_done": false,
+                "is_done": true,
                 "priority": "normal",
                 "due_date": null,
                 "start_date": "2026-04-20",
