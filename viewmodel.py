@@ -258,6 +258,12 @@ class ViewModel:
         for child in task.children:
             self._collect_subtree_ids(child, into)
 
+    def _set_descendants_project(self, task: Task, project: Optional[str]) -> None:
+        """遞迴設定所有子孫的專案名稱。"""
+        for child in task.children:
+            child.project = project
+            self._set_descendants_project(child, project)
+
     def _mark_parents_undone(self, child_id: str) -> int:
         """當 child 變為未完成，往上將所有祖先標示為未完成。回傳改變的父項數量。"""
         if child_id not in self._task_index or child_id not in self._parent_index:
@@ -301,6 +307,9 @@ class ViewModel:
         if parent_id:
             parent, _ = self.find_task_by_id(parent_id)
             if parent:
+                # 若新任務沒有專案名稱，自動繼承父項專案名稱
+                if not new_task.project and parent.project:
+                    new_task.project = parent.project
                 parent.children.append(new_task)
             else:
                 self.tasks.append(new_task)
@@ -352,7 +361,7 @@ class ViewModel:
         if notify_ui:
             self._notify(f"已刪除 {original_count} 個任務")
 
-    def update_task(self, task_id: str, notify_ui: bool = True, **kwargs) -> None:
+    def update_task(self, task_id: str, notify_ui: bool = True, propagate_project: bool = True, **kwargs) -> None:
         task, _ = self.find_task_by_id(task_id)
         if not task:
             return
@@ -366,6 +375,8 @@ class ViewModel:
             
         if "new_project" in kwargs:
             task.project = kwargs["new_project"]
+            if propagate_project:
+                self._set_descendants_project(task, kwargs["new_project"])
             
         if "new_priority" in kwargs:
             task.priority = kwargs["new_priority"]
@@ -535,4 +546,12 @@ class ViewModel:
             new_parent_id = None
 
         self._parent_index[task_to_move.id] = new_parent_id
+
+        # 拖入有專案名稱的父項時，若任務本身無專案則繼承
+        if new_parent_id:
+            new_parent = self._task_index.get(new_parent_id)
+            if new_parent and new_parent.project and not task_to_move.project:
+                task_to_move.project = new_parent.project
+                self._set_descendants_project(task_to_move, new_parent.project)
+
         self._notify(status)

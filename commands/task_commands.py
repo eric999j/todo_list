@@ -110,6 +110,7 @@ class UpdateTaskCommand(Command):
         super().__init__(app, **kwargs)
         self._old_values: dict = {}  # 儲存舊值以便 undo
         self._task_id: Optional[str] = None
+        self._old_descendant_projects: Dict[str, Optional[str]] = {}  # 子孫舊專案名稱
     
     def execute(self) -> bool:
         task_id: Optional[str] = self.params.get("task_id")
@@ -143,14 +144,27 @@ class UpdateTaskCommand(Command):
             self._old_values["new_is_done"] = task.is_done
         if "new_project" in update_kwargs:
             self._old_values["new_project"] = task.project
+            # 備份所有子孫的舊專案名稱，供 undo 精確還原
+            self._old_descendant_projects = {}
+            self._collect_descendant_projects(task)
         
         self.app.update_task(task_id, **update_kwargs)
         return True
+
+    def _collect_descendant_projects(self, task: Task) -> None:
+        """遞迴收集所有子孫的當前專案名稱。"""
+        for child in task.children:
+            self._old_descendant_projects[child.id] = child.project
+            self._collect_descendant_projects(child)
     
     def undo(self) -> None:
-        """逆向操作：還原任務的舊值"""
+        """逆向操作：還原任務的舊值（含子孫專案名稱）"""
         if self._task_id and self._old_values:
-            self.app.update_task(self._task_id, notify_ui=False, **self._old_values)
+            # 還原根任務（不 cascade，避免覆蓋子孫的個別舊值）
+            self.app.update_task(self._task_id, notify_ui=False, propagate_project=False, **self._old_values)
+            # 個別還原每個子孫的舊專案名稱
+            for desc_id, old_proj in self._old_descendant_projects.items():
+                self.app.update_task(desc_id, notify_ui=False, propagate_project=False, new_project=old_proj)
             self._notify_ui("已復原：任務更新")
 
 class ToggleDoneStatusCommand(Command):
@@ -218,6 +232,8 @@ class MoveTaskCommand(Command):
         self._task_id: Optional[str] = None
         self._original_parent_id: Optional[str] = None
         self._original_index: int = 0
+        self._original_project: Optional[str] = None
+        self._original_descendant_projects: Dict[str, Optional[str]] = {}
     
     def execute(self) -> bool:
         task_id: Optional[str] = self.params.get("task_id")
@@ -231,7 +247,7 @@ class MoveTaskCommand(Command):
         
         self._task_id = task_id
         
-        # 先記錄原始位置
+        # 先記錄原始位置與專案資訊
         task, source_list = self.app.find_task_by_id(task_id)
         if not task or source_list is None:
             return False
@@ -239,9 +255,18 @@ class MoveTaskCommand(Command):
         parent, _ = self.app.find_parent_list(task_id)
         self._original_parent_id = parent.id if parent else None
         self._original_index = source_list.index(task)
+        self._original_project = task.project
+        self._original_descendant_projects = {}
+        self._collect_descendant_projects(task)
         
         self.app.move_task(task_id, target_id=target_id, y=y, bbox=bbox, delta_x=delta_x)
         return True
+
+    def _collect_descendant_projects(self, task: Task) -> None:
+        """遞迴收集所有子孫的當前專案名稱。"""
+        for child in task.children:
+            self._original_descendant_projects[child.id] = child.project
+            self._collect_descendant_projects(child)
     
     def undo(self) -> None:
         """逆向操作：將任務移回原位置"""
@@ -269,6 +294,15 @@ class MoveTaskCommand(Command):
             self.app.tasks.insert(min(self._original_index, len(self.app.tasks)), task)
 
         self.app.rebuild_task_index()
+
+        # 還原專案名稱
+        task, _ = self.app.find_task_by_id(self._task_id)
+        if task:
+            task.project = self._original_project
+            for desc_id, old_proj in self._original_descendant_projects.items():
+                desc, _ = self.app.find_task_by_id(desc_id)
+                if desc:
+                    desc.project = old_proj
         
         self._notify_ui("已復原：任務移動")
 
