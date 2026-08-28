@@ -26,25 +26,33 @@ class TaskFilter:
                 filtered_children = TaskFilter.filter_incomplete(task.children)
                 result.append(TaskNode(task=task, children=filtered_children))
         return result
-    
+
     @staticmethod
     def filter_high_priority(tasks: List[Task]) -> List[TaskNode]:
-        """只顯示高優先級任務"""
+        """跨階層展平顯示所有高優先任務（不保留原樹狀結構）"""
         result: List[TaskNode] = []
-        for task in tasks:
-            filtered_children = TaskFilter.filter_high_priority(task.children)
-            if task.priority == "high" or filtered_children:
-                result.append(TaskNode(task=task, children=filtered_children))
+
+        def _walk(nodes: List[Task]) -> None:
+            for t in nodes:
+                if t.priority == "high":
+                    result.append(TaskNode(task=t, children=[]))
+                _walk(t.children)
+
+        _walk(tasks)
         return result
-    
+
     @staticmethod
     def filter_completed(tasks: List[Task]) -> List[TaskNode]:
-        """只顯示已完成的任務"""
+        """跨階層展平顯示所有已完成任務（不保留原樹狀結構）"""
         result: List[TaskNode] = []
-        for task in tasks:
-            if task.is_done:
-                filtered_children = TaskFilter.filter_completed(task.children)
-                result.append(TaskNode(task=task, children=filtered_children))
+
+        def _walk(nodes: List[Task]) -> None:
+            for t in nodes:
+                if t.is_done:
+                    result.append(TaskNode(task=t, children=[]))
+                _walk(t.children)
+
+        _walk(tasks)
         return result
     
     @staticmethod
